@@ -1,0 +1,542 @@
+---
+title: "Time Series Final Report"
+author: "NARMADA, Nicholas (1A172G29-2)"
+date: '2020-08-03'
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Since turning 20 years old, I am finally eligible to buy my own stocks in Japan. It has always been my interest in buying stocks and identifying when to buy what stocks has been difficult. After learning this Time Series Analysis course, I figured that I could use seasonality testing to check when to buy which stock in the future. This paper is aimed to figure out whether there are seasonality patterns among stocks within the same sector, and forecast the ups and downs in the next few months. Stocks from the same sector could potentially grow together in value, which could be attractive to investors who specialize in one particular sector. 
+
+The Global Industry Classification Standard (GISC) was created by MSCI and Standard and Poor's (S&P), who are renowned index providers. It starts with 11 sectors, which can be further sub-divided into 24 industry groups, 68 industries, and 157 sub-industries. 
+
+The 11 GICS sectors are as follows: 
+
+1. Energy
+2. Materials
+3. Industrials
+4. Consumer Discretionary
+5. Consumer Staples
+6. Health Care
+7. Financials
+8. Information Technology
+9. Telecommunication Services
+10. Utilities
+11. Real Estate
+
+There are several investment companies that offer security products that track these 11 sectors. An example is Vanguard, which created Exchange Traded Funds (ETFs) to mirror these GICS sectors. An ETF is a type of security that is a collection of securities, such as stocks, that tracks a certain index. In this case, the ETFs offered is a sector-specific ETF and tracks the GICS sectors. 
+
+Out of the sector-specific ETFs Vanguard offers, only 6 of them are currently available to be traded in Japan through the SBI Securities broker. They are the Materials, Consumer Discretionary, Consumer Staples, Financials, Health Care and Industrials ETF. 
+
+In order to forecast the future stock prices, this paper would use the Seasonal Autoregressive Integrated Moving Average (ARIMA) model and check which particular months are a sector's lows and highs. 
+
+## Model and Data
+
+I have retrieved the following Vanguard ETFs' historical stock prices from Yahoo Finance (ticker symbols are in parentheses):
+
+- Vanguard Materials ETF (VAW) 
+- Vanguard Consumer Discretionary ETF (VCR) 
+- Vanguard Consumer Staples ETF (VDC) 
+- Vanguard Financials ETF (VFH) 
+- Vanguard Health Care ETF (VHT) 
+- Vanguard Industrials ETF (VIS) 
+
+The dataset consists of the ETF's monthly high, low, closing price, adjusted closing price and volume. The dataset dates back to September 2003, which is the date of the creation of Vanguard's sector-specific ETFs. 
+
+This paper would use the adjusted closing price instead of closing price as it accurately reflects a stock's value after factoring in company actions that happen after the market closes. It has historically been considered as the "true price of a stock" and is widely used when examining for historical returns. 
+
+To check whether the adjusted closing prices have seasonalities and trends, this paper uses the decompose function to break down the adjusted closing prices of the ETFs to the different components. 
+
+*Note: To make the report easier to navigate, this paper separates the ETFs into "tabs" and hides codes. To check for the code, please click the "Code" button on the right of each block, and a drop down of the code should pop out
+
+```{r main plot, fig.align="center", message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tseries)
+library(forecast)
+library(vars)
+library(astsa)
+library(pdp)
+
+#reading all 6 files
+VAW <- read.csv("VAW.csv")
+VCR <- read.csv("VCR.csv")
+VDC <- read.csv("VDC.csv")
+VFH <- read.csv("VFH.csv")
+VHT <- read.csv("VHT.csv")
+VIS <- read.csv("VIS.csv")
+
+#only get (Date) and (Adj Close) for data frame construction
+DF.VAW <- data.frame(VAW[, c("Date", "Adj.Close")])
+DF.VCR <- data.frame(VCR[, c("Date", "Adj.Close")])
+DF.VDC <- data.frame(VDC[, c("Date", "Adj.Close")])
+DF.VFH <- data.frame(VFH[, c("Date", "Adj.Close")])
+DF.VHT <- data.frame(VHT[, c("Date", "Adj.Close")])
+DF.VIS <- data.frame(VIS[, c("Date", "Adj.Close")])
+
+#rename the column Adj.close to make it unique per ETF
+colnames(DF.VAW)[2] <- "VAW_Adj.close"
+colnames(DF.VCR)[2] <- "VCR_Adj.close"
+colnames(DF.VDC)[2] <- "VDC_Adj.close"
+colnames(DF.VFH)[2] <- "VFH_Adj.close"
+colnames(DF.VHT)[2] <- "VHT_Adj.close"
+colnames(DF.VIS)[2] <- "VIS_Adj.close"
+
+#only includes date where all data are available
+DF1 <- merge(DF.VCR, DF.VAW, by='Date')
+DF2 <- merge(DF1, DF.VDC, by='Date')
+DF3 <- merge(DF2, DF.VFH, by='Date')
+DF4 <- merge(DF3, DF.VHT, by='Date')
+DF_F <- as.data.frame(merge(DF4, DF.VIS, by='Date'))
+
+DF_F <- DF_F %>%
+  mutate(Date=as.Date(Date))
+
+#convert to TS data frame
+data.ts_VAW<- ts(DF_F$VAW_Adj.close, start = c(2004,9), end = c(2020,7), frequency = 12)
+data.ts_VCR<- ts(DF_F$VCR_Adj.close, start = c(2004,9), end = c(2020,7), frequency = 12)
+data.ts_VDC<- ts(DF_F$VDC_Adj.close, start = c(2004,9), end = c(2020,7), frequency = 12)
+data.ts_VFH<- ts(DF_F$VFH_Adj.close, start = c(2004,9), end = c(2020,7), frequency = 12)
+data.ts_VHT<- ts(DF_F$VHT_Adj.close, start = c(2004,9), end = c(2020,7), frequency = 12)
+data.ts_VIS<- ts(DF_F$VIS_Adj.close, start = c(2004,9), end = c(2020,7), frequency = 12)
+```
+
+### Decomposition {.tabset}
+
+#### VAW
+
+```{r VAW plot, fig.align="center", message=FALSE, warning=FALSE}
+data.ts_VAW %>% decompose %>% autoplot
+```
+
+#### VCR
+
+```{r VCR plot, fig.align="center", message=FALSE, warning=FALSE}
+data.ts_VCR %>% decompose %>% autoplot
+```
+
+#### VDC
+
+```{r VDC plot, fig.align="center", message=FALSE, warning=FALSE}
+data.ts_VDC %>% decompose %>% autoplot
+```
+
+#### VFH
+
+```{r VFH plot, fig.align="center", message=FALSE, warning=FALSE}
+data.ts_VFH %>% decompose %>% autoplot
+```
+
+#### VHT
+
+```{r VHT plot, fig.align="center", message=FALSE, warning=FALSE}
+data.ts_VHT %>% decompose %>% autoplot
+```
+
+#### VIS
+
+```{r VIS plot, fig.align="center", message=FALSE, warning=FALSE}
+data.ts_VIS %>% decompose %>% autoplot
+```
+
+Based on the decomposition of each ETF's adjusted closing price, we can see that each of them has a trend and seasonal factor. Before fitting the data into the SARIMA model, there is a need to conduct differencing to remove the trend and seasonal components. 
+
+## Model Fitting
+
+### Differencing {.tabset}
+
+This paper uses the ndiffs() function to quickly calculate the number of differencing needed to make the time series data trend stationary. For the seasonal component, this paper uses a difference of 12 to remove the seasonality by 1 year. The values are then used as the number of differences, which then produces the graphs as shown below. 
+
+#### VAW
+
+``` {r VAW diff, warning=FALSE, message=FALSE, fig.align="center"}
+diff12_VAW=diff(data.ts_VAW, 12)
+ndiffs(na.remove(data.ts_VAW)) #compute for the number of differencing needed to make the data stationary
+
+#result: 1
+data.ts_VAW_stationary <- diff(diff12_VAW, 1) #get the differenced data
+
+autoplot(data.ts_VAW_stationary, ylab = "VAW Stationary", main = "Differenced VAW")
+```
+
+#### VCR
+
+``` {r VCR diff, warning=FALSE, message=FALSE, fig.align="center"}
+diff12_VCR=diff(data.ts_VCR, 12)
+ndiffs(na.remove(data.ts_VCR)) #compute for the number of differencing needed to make the data stationary
+
+#result: 1
+data.ts_VCR_stationary <- diff(diff12_VCR, differences= 1) #get the differenced data
+
+autoplot(data.ts_VCR_stationary, ylab = "VCR Stationary", main = "Differenced VCR")
+
+```
+
+#### VDC
+
+``` {r VDC diff, warning=FALSE, message=FALSE, fig.align="center"}
+diff12_VDC=diff(data.ts_VDC, 12)
+ndiffs(na.remove(data.ts_VDC)) #compute for the number of differencing needed to make the data stationary
+
+#result: 1
+data.ts_VDC_stationary <- diff(diff12_VDC, differences= 1) #get the differenced data
+
+autoplot(data.ts_VDC_stationary, ylab = "VDC Stationary", main = "Differenced VDC")
+```
+
+#### VFH
+
+``` {r VFH diff, warning=FALSE, message=FALSE, fig.align="center"}
+diff12_VFH=diff(data.ts_VFH, 12)
+ndiffs(na.remove(data.ts_VFH)) #compute for the number of differencing needed to make the data stationary
+
+#result: 1
+data.ts_VFH_stationary <- diff(diff12_VFH, differences= 1) #get the differenced data
+
+autoplot(data.ts_VFH_stationary, ylab = "VFH Stationary", main = "Differenced VFH")
+
+```
+
+#### VHT
+
+``` {r VHT diff, warning=FALSE, message=FALSE, fig.align="center"}
+diff12_VHT=diff(data.ts_VHT, 12)
+ndiffs(na.remove(data.ts_VHT)) #compute for the number of differencing needed to make the data stationary
+
+#result: 2
+data.ts_VHT_stationary <- diff(diff12_VHT, differences= 2) #get the differenced data
+
+autoplot(data.ts_VHT_stationary, ylab = "VHT Stationary", main = "Differenced VHT")
+
+```
+
+#### VIS
+
+``` {r VIS diff, warning=FALSE, message=FALSE, fig.align="center"}
+diff12_VIS=diff(data.ts_VIS, 12)
+ndiffs(na.remove(data.ts_VIS)) #compute for the number of differencing needed to make the data stationary
+
+#result: 1
+data.ts_VIS_stationary <- diff(diff12_VIS, differences= 1) #get the differenced data
+
+autoplot(data.ts_VIS_stationary, ylab = "VIS Stationary", main = "Differenced VIS")
+```
+
+### ACF and PACF Plots {.tabset}
+
+After conducting differencing, this would plot the seasonal ACF and PACF of the differenced data to guess the possible seasonal ARIMA model which is the best fit. (For the ACF and PACF plots, Lag 1 indicates 1 full year's worth of lag, thus it would be equivalent to lag 12.) 
+
+#### VAW
+
+```{r VAW acf pacf, fig.align="center", message=FALSE, warning=FALSE, echo=FALSE,results='hide',fig.keep='all'}
+
+vaw <- data.ts_VAW_stationary
+vcr <- data.ts_VCR_stationary
+vdc <- data.ts_VDC_stationary
+vfh <- data.ts_VFH_stationary
+vht <- data.ts_VHT_stationary
+vis <- data.ts_VIS_stationary
+
+#VAW seasonal ACF PACF
+diff12.vaw = diff(vaw,12)
+acf2(diff12.vaw, 48, main = "ACF & PACF of VAW")
+```
+
+#### VCR
+
+``` {r VCR acf pacf, warning=FALSE, message=FALSE, fig.align="center",results='hide',fig.keep='all'}
+#VCR seasonal ACF PACF
+diff12.vcr = diff(vcr,12)
+acf2(diff12.vcr, 48, main = "ACF & PACF of VCR")
+```
+
+#### VDC
+
+``` {r VDC acf pacf, warning=FALSE, message=FALSE, fig.align="center",results='hide',fig.keep='all'}
+#VDC seasonal ACF PACF
+diff12.vdc = diff(vdc,12)
+acf2(diff12.vdc, 48, main = "ACF & PACF of VDC")
+```
+
+#### VFH
+
+``` {r VFH acf pacf, warning=FALSE, message=FALSE, fig.align="center",results='hide',fig.keep='all'}
+#VFH seasonal ACF PACF
+diff12.vfh = diff(vfh,12)
+acf2(diff12.vfh, 48, main = "ACF & PACF of VFH")
+```
+
+#### VHT
+
+``` {r VHT acf pacf, warning=FALSE, message=FALSE, fig.align="center",results='hide',fig.keep='all'}
+#VHT seasonal ACF PACF
+diff12.vht = diff(vht,12)
+acf2(diff12.vht, 48, main = "ACF & PACF of VHT")
+```
+
+#### VIS
+
+``` {r VIS acf pacf, warning=FALSE, message=FALSE, fig.align="center",results='hide',fig.keep='all'}
+#VIS seasonal ACF PACF
+diff12.vis = diff(vis,12)
+acf2(diff12.vis, 48, main = "ACF & PACF of VIS")
+```
+
+### SARIMA Model {.tabset}
+
+After plotting the ACF and PACF models, also with the help of the auto.arima function, this paper would construct the following SARIMA model for each of the ETFs. The results of each ETFs' auto.arima are also as shown below. 
+
+#### VAW
+
+**VAW: SARIMA(0,1,0)(0,1,1)[12] **
+
+```{r VAW sarima model, fig.align="center", message=FALSE, warning=FALSE}
+
+auto.arima(data.ts_VAW)
+sarima(data.ts_VAW,0,1,0,0,1,1,12)
+
+```
+
+#### VCR
+
+**VCR: SARIMA(1,1,1)(0,2,1)[12] **
+
+```{r VCR sarima model, fig.align="center", message=FALSE, warning=FALSE}
+
+auto.arima(data.ts_VCR)
+sarima(data.ts_VCR,1,1,1,0,2,1,12)
+
+```
+
+#### VDC
+
+**VDC: SARIMA(0,1,2)(1,1,1)[12] **
+
+```{r VDC sarima model, fig.align="center", message=FALSE, warning=FALSE}
+
+auto.arima(data.ts_VDC)
+sarima(data.ts_VDC,0,1,2,1,1,1,12)
+
+```
+
+#### VFH
+
+**VFH: SARIMA(1,1,1)(0,1,1)[12] **
+
+```{r VFH sarima model, fig.align="center", message=FALSE, warning=FALSE}
+
+auto.arima(data.ts_VFH)
+sarima(data.ts_VFH,1,1,1,0,1,1,12)
+
+```
+
+#### VHT
+
+**VHT: SARIMA(0,2,4)(0,1,1)[12] **
+
+```{r VHT sarima model, fig.align="center", message=FALSE, warning=FALSE}
+
+auto.arima(data.ts_VHT)
+sarima(data.ts_VHT,0,2,4,0,1,1,12)
+
+```
+
+#### VIS
+
+**VIS: SARIMA(0,1,0)(0,1,1)[12] **
+
+```{r VIS sarima model, fig.align="center", message=FALSE, warning=FALSE}
+
+auto.arima(data.ts_VIS)
+sarima(data.ts_VIS,0,1,0,0,1,1,12)
+
+```
+
+
+## Results
+
+### Forecast {.tabset}
+
+After fitting each ETF into a seasonal ARIMA model, this paper would predict the adjusted closing prices of the next 24 months. The forecasts also includes the lower limit and the upper limit of the forecasts. The results of each ETF are as shown below. 
+
+#### VAW
+
+```{r VAW forecast, fig.align="center", message=FALSE, warning=FALSE}
+
+sarima.for(data.ts_VAW, 24, 0,1,0,0,1,1,12)
+
+```
+
+#### VCR
+
+```{r VCR forecast, fig.align="center", message=FALSE, warning=FALSE}
+
+sarima.for(data.ts_VCR, 24, 1,1,1,0,2,1,12)
+
+```
+
+#### VDC
+
+```{r VDC forecast, fig.align="center", message=FALSE, warning=FALSE}
+
+sarima.for(data.ts_VDC, 24, 0,1,2,1,1,1,12)
+
+```
+
+#### VFH
+
+```{r VFH forecast, fig.align="center", message=FALSE, warning=FALSE}
+
+sarima.for(data.ts_VFH, 24, 1,1,1,0,1,1,12)
+
+```
+
+#### VHT
+
+```{r VHT forecast, fig.align="center", message=FALSE, warning=FALSE}
+
+sarima.for(data.ts_VHT, 24, 0,2,4,0,1,1,12)
+
+```
+
+#### VIS
+
+```{r VIS forecast, fig.align="center", message=FALSE, warning=FALSE}
+
+sarima.for(data.ts_VIS, 24, 0,1,0,0,1,1,12)
+
+```
+
+### Accuracy of Forecast {.tabset}
+
+The dataset used in this paper only includes adjusted closing prices until July 2020. To check whether the model has accurately forecasted the next few months, this section would check the difference between the predicted August 2020 prices and the actual August 2020 price. 
+
+#### VAW
+
+```{r VAW table, fig.align="center", message=FALSE, warning=FALSE, echo=FALSE}
+
+vaw.table <- matrix(c(128.1918, 130.32),ncol=2,byrow=TRUE)
+colnames(vaw.table) <- c("Predicted Adj. Price","Actual Adj. Price")
+vaw.table <- as.table(vaw.table)
+
+knitr::kable(
+  vaw.table, caption = 'VAW Prices, August 2020'
+)
+```
+*Note: August 2020 actual adjusted closing prices are also sourced from Yahoo Finance*
+
+Based on the forecast of the model, the forecasted August 2020 result is 128.1918. In the August 1 2020 adjusted closing price provided by Yahoo Finance, it is 130.32. The forecasted price is underpredicting the actual price by 2.13. 
+
+#### VCR
+
+```{r VCR table, fig.align="center", message=FALSE, warning=FALSE, echo=FALSE}
+
+vcr.table <- matrix(c(213.3600, 220.78),ncol=2,byrow=TRUE)
+colnames(vcr.table) <- c("Predicted Adj. Price","Actual Adj. Price")
+vcr.table <- as.table(vcr.table)
+
+knitr::kable(
+  vcr.table, caption = 'VCR Prices, August 2020'
+)
+```
+**Note: August 2020 actual adjusted closing prices are also sourced from Yahoo Finance*
+
+Based on the forecast of the model, the forecasted August 2020 result is 213.3600. In the August 1 2020 adjusted closing price provided by Yahoo Finance, it is 220.78. The forecasted price is underpredicting the actual price by 7.42. 
+
+#### VDC
+
+```{r VDC table, fig.align="center", message=FALSE, warning=FALSE, echo=FALSE}
+
+vdc.table <- matrix(c(158.7104, 161.73),ncol=2,byrow=TRUE)
+colnames(vdc.table) <- c("Predicted Adj. Price","Actual Adj. Price")
+vdc.table <- as.table(vdc.table)
+
+knitr::kable(
+  vdc.table, caption = 'VDC Prices, August 2020'
+)
+```
+**Note: August 2020 actual adjusted closing prices are also sourced from Yahoo Finance*
+
+Based on the forecast of the model, the forecasted August 2020 result is 158.7104. In the August 1 2020 adjusted closing price provided by Yahoo Finance, it is 161.73. The forecasted price is underpredicting the actual price by 3.02. 
+
+#### VFH
+
+```{r VFH table, fig.align="center", message=FALSE, warning=FALSE, echo=FALSE}
+
+vfh.table <- matrix(c(57.60852, 58.80),ncol=2,byrow=TRUE)
+colnames(vfh.table) <- c("Predicted Adj. Price","Actual Adj. Price")
+vfh.table <- as.table(vfh.table)
+
+knitr::kable(
+  vfh.table, caption = 'VFH Prices, August 2020'
+)
+```
+**Note: August 2020 actual adjusted closing prices are also sourced from Yahoo Finance*
+
+Based on the forecast of the model, the forecasted August 2020 result is 57.60852.  In the August 1 2020 adjusted closing price provided by Yahoo Finance, it is 58.80. The forecasted price is underpredicting the actual price by 1.19.
+
+#### VHT
+
+```{r VHT table, fig.align="center", message=FALSE, warning=FALSE, echo=FALSE}
+
+vht.table <- matrix(c(201.5882, 204.47),ncol=2,byrow=TRUE)
+colnames(vht.table) <- c("Predicted Adj. Price","Actual Adj. Price")
+vht.table <- as.table(vht.table)
+
+knitr::kable(
+  vht.table, caption = 'VHT Prices, August 2020'
+)
+```
+**Note: August 2020 actual adjusted closing prices are also sourced from Yahoo Finance*
+
+Based on the forecast of the model, the forecasted August 2020 result is 201.5882. In the August 1 2020 adjusted closing price provided by Yahoo Finance, it is 204.47. The forecasted price is underpredicting the actual price by 2.88.
+
+#### VIS
+
+```{r VIS table, fig.align="center", message=FALSE, warning=FALSE, echo=FALSE}
+
+vis.table <- matrix(c(213.3600, 220.78),ncol=2,byrow=TRUE)
+colnames(vis.table) <- c("Predicted Adj. Price","Actual Adj. Price")
+vis.table <- as.table(vis.table)
+
+knitr::kable(
+  vis.table, caption = 'VIS Prices, August 2020'
+)
+```
+**Note: August 2020 actual adjusted closing prices are also sourced from Yahoo Finance*
+
+Based on the forecast of the model, the forecasted August 2020 result is 134.7071. In the August 1 2020 adjusted closing price provided by Yahoo Finance, it is 137.15. The forecasted price is underpredicting the actual price by 7.42.
+
+## My Decision 
+
+### Short-Term Gains
+
+If I want to earn quick profits, I would identify the ETFs with noticeable seasonal highs and lows. The two ETFs that has shown this characteristic is VCR and VFH. 
+
+VCR's graph shows that it will drop at March 2021, rise until July 2021 and begin to stagnate until January 2022. As someone who wants to gain profits through the capital gains, I would buy VCR annually on March, and sell the ETF at July. The forecasted capital gain I could potentially earn for year 2021 if I were to follow this strategy would be 78.4 for a holding period of 3 months. 
+
+Although VFH's prices does not rise as much as VCR and the forecasts are below its highest peak (does not have an upward trend starting year 2020), I would still be able to earn profits by entering the market in March 2021 and selling it off on September 2021. However, it is less profitable compared to holding the VCR ETF as I would be holding the ETF for a 6 months for a capital gain of 7.6. Considering that I could earn 10 times more capital gain with VCR with a shorter holding period, I would prefer to put all my money in buying VCR than buying VFH. 
+
+### Long-Term Gains
+
+If I were to hold a stock for a long time, I would consider the forecasted graphs that has an upward rising trend for the whole 24 months. The two stocks that share this characteristic is VDC and VHT. 
+
+VHT would seem the better pick as it has a steeper slope, which means that capital gains are higher compared to VDC. Furthermore, every time the VHT's price drops, the price drops by less than 1. This indicates a very strong growth of the health care industry, and would be a very wise investment considering that health care has a growing importance in the current aging society all over the world. If a coronavirus vaccine is made, stocks may have a shock increase as well, which helps inform me that I should buy the VHT ETF now and hold it for at least 2 years. 
+
+VDC also has an upward sloping trend, but is inferior because of the larger drops in between and the larger difference in the upper and lower limits. Considering that it has less profitability and higher volatility based on the larger upper and lower limits, I would prefer to buy VHT ETF over VDC. 
+
+## Conclusion
+
+As someone who would want to maximize their income, I would slowly start buying VHT ETFs over the months. Once it is March 2021, I would sell all the VHT ETFs and buy VCR ETFs, holding it until July 2021 and selling it again. With the money gained from selling VCR, I would then buy VHT again and hold it until March 2022, and the cycle goes on. 
+
+I would not consider buying VAW, VFH and VIS due to the huge difference of the upper and lower limit. As a a risk averse person, having a wide difference in price possibilities makes me unnecessarily worried. 
+
+However, my decision may change after gaining more data over time as the model may become more accurate in its forecasts with data nearer to the actual month. 
